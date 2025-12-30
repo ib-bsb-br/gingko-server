@@ -17,7 +17,8 @@ import redisConnect from 'connect-redis';
 import { WebSocketServer } from "ws";
 import * as realtime from "./realtime.js";
 import axios from "axios";
-import sgMail from "@sendgrid/mail";
+import FormData from "form-data";
+import Mailgun from "mailgun.js";
 import config from "../config.js";
 import Stripe from 'stripe';
 
@@ -225,7 +226,11 @@ app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :url HTTP/:htt
 app.use(express.json({limit: '50mb'}));
 app.use(express.urlencoded({ extended: true }));
 
-sgMail.setApiKey(config.SENDGRID_API_KEY);
+const mailgun = new Mailgun(FormData);
+const mg = mailgun.client({
+  username: "api",
+  key: config.MAILGUN_API_KEY,
+});
 
 
 /* ==== Start Server ==== */
@@ -761,14 +766,14 @@ app.post('/forgot-password', async (req, res) => {
     resetTokenInsert.run(user.resetToken, email, user.tokenCreatedAt);
 
     const msg = {
-      to: email,
       from: config.SUPPORT_EMAIL,
+      to: [email],
       subject: 'Password Reset link for Gingkowriter.com',
       text: `The reset link: https://app.gingkowriter.com/reset-password/${token}`,
       html: `The reset link: https://app.gingkowriter.com/reset-password/${token}`
     }
 
-    await sgMail.send(msg);
+    await mg.messages.create(config.MAILGUN_DOMAIN, msg);
     res.status(200).send({email: email})
   } catch (err) {
     console.error(err);
@@ -854,33 +859,33 @@ app.use('/db', proxy('http://127.0.0.1:5984', {
 
 app.post('/pleasenospam', async (req, res) => {
   const msg = {
-    to: req.body.toEmail,
     from: config.SUPPORT_EMAIL,
-    replyTo: req.body.fromEmail,
-    cc: req.body.fromEmail,
+    to: [req.body.toEmail],
+    'h:Reply-To': req.body.fromEmail,
+    cc: [req.body.fromEmail],
     subject: req.body.subject,
     text: req.body.body,
     html: req.body.body,
   }
 
   const urgentAutoresponse = {
-    to: req.body.fromEmail,
     from: config.SUPPORT_URGENT_EMAIL,
+    to: [req.body.fromEmail],
     subject: config.URGENT_MESSAGE_SUBJECT,
     html: config.URGENT_MESSAGE_BODY,
   }
 
   try {
-    await sgMail.send(msg);
+    await mg.messages.create(config.MAILGUN_DOMAIN, msg);
 
     if (req.body.toEmail == config.SUPPORT_URGENT_EMAIL) {
-      await sgMail.send(urgentAutoresponse);
+      await mg.messages.create(config.MAILGUN_DOMAIN, urgentAutoresponse);
     }
 
     res.status(201).send();
   } catch (err) {
-    console.error(err.response.body)
-    res.status(err.code || 400).send(err.response.body);
+    console.error(err)
+    res.status(err.code || 400).send(err);
   }
 });
 
